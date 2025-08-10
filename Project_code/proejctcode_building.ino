@@ -34,18 +34,17 @@ oLed display(SCREEN_WIDTH, SCREEN_HEIGHT);
 #define STEP_VARIANCE_THRESHOLD 0.008  // Reduced variance threshold
 
 // SEIZURE DETECTION PARAMETERS (Easier triggering)
-#define SEIZURE_THRESHOLD 2.7   // Reduced from 2.0g for easier testing
-#define SEIZURE_DURATION 700       // Reduced from 400ms to 300ms
-#define SEIZURE_BURST_COUNT 15      // Number of consecutive bursts needed
+#define SEIZURE_THRESHOLD 1.8      // Reduced from 2.0g for easier testing
+#define SEIZURE_DURATION 300       // Reduced from 400ms to 300ms
+#define SEIZURE_BURST_COUNT 3      // Number of consecutive bursts needed
 #define SEIZURE_RESET_TIME 1000    // Reset if no activity for 1 second
 
 // FALL DETECTION PARAMETERS (Easier triggering)
 #define FALL_FREE_FALL_THRESHOLD 0.563   // Increased from 0.563g (easier to trigger)
-#define FALL_IMPACT_THRESHOLD 1.5     // Reduced from 2.5g
-#define FALL_ORIENTATION_THRESHOLD 35   // Reduced from 30 degrees
-#define FALL_STILLNESS_TIME 200       // Reduced from 1000ms
-#define FALL_STILLNESS_THRESHOLD 1.1   // Increased from 0.5g
-#define FALL_STILLNESS_THRESHOLD_min 0.9 // min acc to start stillness
+#define FALL_IMPACT_THRESHOLD 2.2       // Reduced from 2.5g
+#define FALL_ORIENTATION_THRESHOLD 25   // Reduced from 30 degrees
+#define FALL_STILLNESS_TIME 800        // Reduced from 1000ms
+#define FALL_STILLNESS_THRESHOLD 0.6   // Increased from 0.5g
 
 // Kalman Filter State Variables
 float filteredAx = 0, filteredAy = 0, filteredAz = 0;
@@ -72,7 +71,6 @@ unsigned long last_seizure_activity = 0;
 // Fall detection variables
 bool fall_free_fall_detected = false;
 bool fall_impact_detected = false;
-int fall_stillness_comfirmed =0;
 bool fall_orientation_changed = false;
 unsigned long fall_detection_start = 0;
 unsigned long fall_stillness_start = 0;
@@ -155,7 +153,7 @@ void loop() {
     readSensorData();
     
     // Process health monitoring functions
-    // processStepCounting();
+    processStepCounting();
     processSeizureDetection();
     processFallDetection();
     
@@ -168,7 +166,7 @@ void loop() {
     // Log data for debugging
     logHealthData();
     
-    delay(20);  // 20Hz sampling rate
+    delay(5);  // 20Hz sampling rate
 }
 
 void readSensorData() {
@@ -190,22 +188,13 @@ void readSensorData() {
     float rawGy = gyroY_raw / 131.0;
     float rawGz = gyroZ_raw / 131.0;
     
-    // // Apply Kalman filtering
-    // filteredAx = simpleKalmanFilter(rawAx, filteredAx, P_ax);
-    // filteredAy = simpleKalmanFilter(rawAy, filteredAy, P_ay);
-    // filteredAz = simpleKalmanFilter(rawAz, filteredAz, P_az);
-    // filteredGx = simpleKalmanFilter(rawGx, filteredGx, P_gx);
-    // filteredGy = simpleKalmanFilter(rawGy, filteredGy, P_gy);
-    // filteredGz = simpleKalmanFilter(rawGz, filteredGz, P_gz);
-
-
-    filteredAx = rawAx ;
-    filteredAy = rawAy ;
-    filteredAz = rawAz ;
-    filteredGx = rawGx ;
-    filteredGy = rawGy ;
-    filteredGz = rawGz ;
-    
+    // Apply Kalman filtering
+    filteredAx = simpleKalmanFilter(rawAx, filteredAx, P_ax);
+    filteredAy = simpleKalmanFilter(rawAy, filteredAy, P_ay);
+    filteredAz = simpleKalmanFilter(rawAz, filteredAz, P_az);
+    filteredGx = simpleKalmanFilter(rawGx, filteredGx, P_gx);
+    filteredGy = simpleKalmanFilter(rawGy, filteredGy, P_gy);
+    filteredGz = simpleKalmanFilter(rawGz, filteredGz, P_gz);
 }
 
 void processStepCounting() {
@@ -273,7 +262,6 @@ void processSeizureDetection() {
                 seizure_burst_count >= SEIZURE_BURST_COUNT) {
                 
                 triggerSeizureAlert();
-                seizure_burst_count = 1;
                 return;
             }
         }
@@ -281,8 +269,6 @@ void processSeizureDetection() {
         // Reset if no activity for reset time
         if (seizure_detected && (currentTime - last_seizure_activity) > SEIZURE_RESET_TIME) {
             resetSeizureDetection();
-            seizure_burst_count = 1;
-
         }
     }
 }
@@ -298,7 +284,6 @@ void processFallDetection() {
     
     unsigned long currentTime = millis();
     
-    float reset_time_thresholds =200;
     // Phase 1: Free fall detection
     if (!fall_free_fall_detected && accelMagnitude < FALL_FREE_FALL_THRESHOLD) {
         fall_free_fall_detected = true;
@@ -309,58 +294,37 @@ void processFallDetection() {
     // Phase 2: Impact detection (after free fall)
     if (fall_free_fall_detected && !fall_impact_detected && 
         accelMagnitude > FALL_IMPACT_THRESHOLD) {
-        unsigned long currentTime_2 = millis();
-        if(currentTime_2-fall_detection_start>=reset_time_thresholds){
-            fall_impact_detected = true;
-            fall_stillness_start = currentTime;
-            Serial.println("Impact phase detected!");
-        }
-
+        
+        fall_impact_detected = true;
+        Serial.println("Impact phase detected!");
     }
     
     // Phase 3: Orientation change detection
-    // if (fall_impact_detected && !fall_orientation_changed) {
-    //     float orientationChange = calculateOrientationChange();
+    if (fall_impact_detected && !fall_orientation_changed) {
+        float orientationChange = calculateOrientationChange();
         
-    //     if (orientationChange > FALL_ORIENTATION_THRESHOLD) {
-    //         fall_orientation_changed = true;
-    //         fall_stillness_start = currentTime;
-    //         Serial.println("Orientation change detected!");
-    //     }
-    // }
-    
-    // Phase 4: Stillness confirmation
-    if (fall_impact_detected) {
-        if (accelMagnitude < FALL_STILLNESS_THRESHOLD && (currentTime - fall_stillness_start) > FALL_STILLNESS_TIME) {
-            if(accelMagnitude>FALL_STILLNESS_THRESHOLD_min){
-                fall_stillness_comfirmed++;
-            }
+        if (orientationChange > FALL_ORIENTATION_THRESHOLD) {
+            fall_orientation_changed = true;
+            fall_stillness_start = currentTime;
+            Serial.println("Orientation change detected!");
         }
     }
-
-    // if (!fall_detected) {
-    //     if (accelMagnitude < FALL_STILLNESS_THRESHOLD && 
-    //         (currentTime - fall_stillness_start) > FALL_STILLNESS_TIME) {
-            
-    //         triggerFallAlert();
-    //         return;
-    //     }
-    // }
     
-    if (fall_free_fall_detected && fall_impact_detected && fall_stillness_comfirmed>10) { 
-        triggerFallAlert();
-
+    // Phase 4: Stillness confirmation
+    if (fall_orientation_changed && !fall_detected) {
+        if (accelMagnitude < FALL_STILLNESS_THRESHOLD && 
+            (currentTime - fall_stillness_start) > FALL_STILLNESS_TIME) {
+            
+            triggerFallAlert();
+            return;
+        }
     }
-
+    
     // Reset fall detection if too much time has passed
-    if (fall_free_fall_detected && (currentTime - fall_detection_start) < reset_time_thresholds) {
-        if(accelMagnitude > FALL_IMPACT_THRESHOLD){
-            resetFallDetection();
-        }  
-    }else if (currentTime - fall_detection_start>1300){
+    if (fall_free_fall_detected && 
+        (currentTime - fall_detection_start) > 5000) {  // 5 second timeout
         resetFallDetection();
     }
-
 }
 
 float calculateOrientationChange() {
@@ -410,8 +374,8 @@ void triggerFallAlert() {
     fall_detected = true;
     
     Serial.println("*** FALL DETECTED! ALERT! ***");
-    buzzAlert(3, 100);  // 10 buzzes, 100ms each
-
+    buzzAlert(10, 100);  // 10 buzzes, 100ms each
+    
     resetFallDetection();
 }
 
@@ -429,7 +393,6 @@ void resetFallDetection() {
     fall_detection_start = 0;
     fall_stillness_start = 0;
     fall_detected = false;
-    fall_stillness_comfirmed=0;
 }
 
 void updateDisplay() {

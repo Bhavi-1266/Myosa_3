@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>ESP32 Buzzer Control</title>
+  <script type="module">
+    // Firebase imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+    import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+
+    // Your Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyByS6w7S7xJol6hBMkEH6QK0DNHsa6c5CU",
+      authDomain: "myosa-3.firebaseapp.com",
+      databaseURL: "https://myosa-3-default-rtdb.firebaseio.com/",
+      projectId: "myosa-3",
+      storageBucket: "myosa-3.firebasestorage.app",
+      messagingSenderId: "663467455606",
+      appId: "1:663467455606:web:92de401cd3e832310d1b57",
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    function buzz() {
+      set(ref(db, "buzzerCommand"), 1);
+      setTimeout(() => {
+        set(ref(db, "buzzerCommand"), 0); // Reset
+      }, 1000);
+    }
+
+    window.buzz = buzz;
+  </script>
+</head>
+<body style="text-align:center; font-family:Arial">
+  <h1>ESP32 Buzzer Control</h1>
+  <button onclick="buzz()" style="padding:10px 20px; font-size:16px;">Buzz!</button>
+</body>
+</html>

@@ -33,6 +33,8 @@ oLed display(SCREEN_WIDTH, SCREEN_HEIGHT);
 #define STEP_MAX_PERIOD 2000       // 2 seconds maximum between steps
 #define STEP_VARIANCE_THRESHOLD 0.008  // Reduced variance threshold
 
+
+
 // SEIZURE DETECTION PARAMETERS (Easier triggering)
 #define SEIZURE_THRESHOLD 2.7   // Reduced from 2.0g for easier testing
 #define SEIZURE_DURATION 700       // Reduced from 400ms to 300ms
@@ -55,13 +57,11 @@ float kalmanR = 0.5;
 float P_ax = 1.0, P_ay = 1.0, P_az = 1.0;
 float P_gx = 1.0, P_gy = 1.0, P_gz = 1.0;
 
-// Step counting variables
-unsigned long stepCount = 0;
-unsigned long lastStepTime = 0;
-float lastAccelMagnitude = 1.0;
-bool stepPeakDetected = false;
-float stepVarianceSum = 0;
-int stepSampleCount = 0;
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 // Seizure detection variables
 unsigned long seizure_start_time = 0;
@@ -78,6 +78,15 @@ unsigned long fall_detection_start = 0;
 unsigned long fall_stillness_start = 0;
 bool fall_detected = false;
 float initial_orientation[3] = {0, 0, 0};
+// These go after your existing global step counting variables
+
+
+//step variable over
+int stepCount =0;
+bool step_L_peak_achieved=false;
+bool step_H_peak_achieved=false;
+float threshold_step = 0.850;
+
 
 // System variables
 enum SystemMode { MODE_MONITORING, MODE_STEP_COUNT, MODE_SEIZURE_ALERT, MODE_FALL_ALERT };
@@ -105,6 +114,11 @@ void showErrorScreen(const char* error);
 void buzzAlert(int numBuzz, int duration);
 void logHealthData();
 void readSensorData();
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
     Serial.begin(115200);
@@ -146,7 +160,6 @@ void setup() {
     
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
-    
     Serial.println("Starting comprehensive health monitoring...");
 }
 
@@ -155,7 +168,7 @@ void loop() {
     readSensorData();
     
     // Process health monitoring functions
-    // processStepCounting();
+     processStepCounting();
     processSeizureDetection();
     processFallDetection();
     
@@ -208,47 +221,30 @@ void readSensorData() {
     
 }
 
-void processStepCounting() {
-    // Calculate acceleration magnitude
-    float accelMagnitude = sqrt(filteredAx * filteredAx + 
+void processStepCounting(){
+     float accelMagnitude = sqrt(filteredAx * filteredAx + 
                                filteredAy * filteredAy + 
                                filteredAz * filteredAz);
-    
-    unsigned long currentTime = millis();
-    
-    // Step detection using peak detection algorithm
-    if (accelMagnitude > STEP_THRESHOLD && !stepPeakDetected) {
-        // Calculate time since last step
-        unsigned long timeSinceLastStep = currentTime - lastStepTime;
-        
-        // Check if within valid step timing window
-        if (timeSinceLastStep > STEP_MIN_PERIOD && timeSinceLastStep < STEP_MAX_PERIOD) {
-            // Calculate variance for motion validation
-            stepVarianceSum += (accelMagnitude - lastAccelMagnitude) * (accelMagnitude - lastAccelMagnitude);
-            stepSampleCount++;
-            
-            if (stepSampleCount > 5) {
-                float variance = stepVarianceSum / stepSampleCount;
-                if (variance > STEP_VARIANCE_THRESHOLD) {
-                    // Valid step detected
-                    stepCount++;
-                    lastStepTime = currentTime;
-                    stepPeakDetected = true;
-                    
-                    Serial.print("STEP DETECTED! Total: ");
-                    Serial.println(stepCount);
-                }
-                // Reset variance calculation
-                stepVarianceSum = 0;
-                stepSampleCount = 0;
-            }
-        }
-    } else if (accelMagnitude < STEP_THRESHOLD - 0.1) {
-        stepPeakDetected = false;
+    // Serial.println("accelMagnitude:");
+    // Serial.println(accelMagnitude);
+    // Serial.println("step:");
+    // Serial.println(stepCount);
+    // if(accelMagnitude>1+threshold_step){
+    //     step_H_peak_achieved=true;
+    // }
+    if(accelMagnitude<threshold_step){
+        step_L_peak_achieved=true;
     }
-    
-    lastAccelMagnitude = accelMagnitude;
+
+    if(accelMagnitude>0.95 && accelMagnitude<1.05 ){
+        if(step_L_peak_achieved){
+            stepCount+=2;
+            step_H_peak_achieved=false;
+            step_L_peak_achieved=false;
+        }
+    }
 }
+
 
 void processSeizureDetection() {
     float accelMagnitude = sqrt(filteredAx * filteredAx + 
@@ -541,7 +537,6 @@ void logHealthData() {
     static unsigned long lastLog = 0;
     if (millis() - lastLog > 1000) {  // Log every second
         float accelMag = sqrt(filteredAx * filteredAx + filteredAy * filteredAy + filteredAz * filteredAz);
-        
         Serial.print("Steps: ");
         Serial.print(stepCount);
         Serial.print(" | Accel: ");

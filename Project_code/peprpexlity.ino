@@ -10,6 +10,49 @@
 #include <oled.h>
 #include <math.h>
 
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <FirebaseESP32.h>
+// Provide the token generation process info.
+#include <addons/TokenHelper.h>
+// Provide the RTDB payload printing info and other helper functions.
+#include <addons/RTDBHelper.h>
+
+
+// ------------- Firebase stuff -----------------
+
+
+/* 1. Define the WiFi credentials */
+#define WIFI_SSID "BHAVY2"
+#define WIFI_PASSWORD "Bms@12666"
+
+// For the following credentials, see examples/Authentications/SignInAsUser/EmailPassword/EmailPassword.ino
+
+/* 2. Define the API Key */
+#define API_KEY "AIzaSyByS6w7S7xJol6hBMkEH6QK0DNHsa6c5CU"
+
+/* 3. Define the RTDB URL */
+#define DATABASE_URL "https://myosa-3-default-rtdb.firebaseio.com" //<databaseName>.firebaseio.com or <databaseName>.<region>.firebasedatabase.app
+
+/* 4. Define the user Email and password that alreadey registerd or added in your project */
+#define USER_EMAIL "Bhavy_mr@cs.iitr.ac.in"
+#define USER_PASSWORD "Bhavy@2006"
+
+// Define Firebase Data object
+FirebaseData fbdo;
+
+FirebaseAuth auth;
+FirebaseConfig config;
+
+unsigned long sendDataPrevMillis = 0;
+
+unsigned long count = 0;
+
+
+//-----------------------------------------------
+
+
 // MPU6050 I2C address (MYOSA platform uses 0x69)
 #define MPU6050_ADDRESS 0x69
 
@@ -27,22 +70,25 @@ oLed display(SCREEN_WIDTH, SCREEN_HEIGHT);
 
 // STEP COUNTING PARAMETERS (Based on scientific research)
 #define STEP_THRESHOLD 1.15        // Reduced from 1.25g for easier testing
-#define STEP_MIN_PERIOD 25        // 250ms minimum between steps (instead of 300ms)
+#define STEP_MIN_PERIOD 250        // 250ms minimum between steps (instead of 300ms)
 #define STEP_MAX_PERIOD 2000       // 2 seconds maximum between steps
 #define STEP_VARIANCE_THRESHOLD 0.008  // Reduced variance threshold
 
+
+
 // SEIZURE DETECTION PARAMETERS (Easier triggering)
-#define SEIZURE_THRESHOLD 1.4     // Reduced from 2.0g for easier testing
-#define SEIZURE_DURATION 30// Reduced from 400ms to 300ms
-#define SEIZURE_BURST_COUNT 1     // Number of consecutive bursts needed
+#define SEIZURE_THRESHOLD 2.7   // Reduced from 2.0g for easier testing
+#define SEIZURE_DURATION 700       // Reduced from 400ms to 300ms
+#define SEIZURE_BURST_COUNT 15      // Number of consecutive bursts needed
 #define SEIZURE_RESET_TIME 1000    // Reset if no activity for 1 second
 
 // FALL DETECTION PARAMETERS (Easier triggering)
-#define FALL_FREE_FALL_THRESHOLD 0.6    // Increased from 0.563g (easier to trigger)
-#define FALL_IMPACT_THRESHOLD 2.2       // Reduced from 2.5g
-#define FALL_ORIENTATION_THRESHOLD 25   // Reduced from 30 degrees
-#define FALL_STILLNESS_TIME 800        // Reduced from 1000ms
-#define FALL_STILLNESS_THRESHOLD 0.6   // Increased from 0.5g
+#define FALL_FREE_FALL_THRESHOLD 0.563   // Increased from 0.563g (easier to trigger)
+#define FALL_IMPACT_THRESHOLD 1.5     // Reduced from 2.5g
+#define FALL_ORIENTATION_THRESHOLD 35   // Reduced from 30 degrees
+#define FALL_STILLNESS_TIME 200       // Reduced from 1000ms
+#define FALL_STILLNESS_THRESHOLD 1.1   // Increased from 0.5g
+#define FALL_STILLNESS_THRESHOLD_min 0.9 // min acc to start stillness
 
 // Kalman Filter State Variables
 float filteredAx = 0, filteredAy = 0, filteredAz = 0;
@@ -52,13 +98,11 @@ float kalmanR = 0.5;
 float P_ax = 1.0, P_ay = 1.0, P_az = 1.0;
 float P_gx = 1.0, P_gy = 1.0, P_gz = 1.0;
 
-// Step counting variables
-unsigned long stepCount = 0;
-unsigned long lastStepTime = 0;
-float lastAccelMagnitude = 1.0;
-bool stepPeakDetected = false;
-float stepVarianceSum = 0;
-int stepSampleCount = 0;
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 // Seizure detection variables
 unsigned long seizure_start_time = 0;
@@ -69,11 +113,23 @@ unsigned long last_seizure_activity = 0;
 // Fall detection variables
 bool fall_free_fall_detected = false;
 bool fall_impact_detected = false;
+int fall_stillness_comfirmed =0;
 bool fall_orientation_changed = false;
 unsigned long fall_detection_start = 0;
 unsigned long fall_stillness_start = 0;
 bool fall_detected = false;
 float initial_orientation[3] = {0, 0, 0};
+// These go after your existing global step counting variables
+
+
+//step variable over
+int stepCount =0;
+bool step_L_peak_achieved=false;
+bool step_H_peak_achieved=false;
+float threshold_step = 0.850;
+bool step_detect = false;
+Firebase.setBool(fbdo, "/StepDetect", step_detect);
+
 
 // System variables
 enum SystemMode { MODE_MONITORING, MODE_STEP_COUNT, MODE_SEIZURE_ALERT, MODE_FALL_ALERT };
@@ -101,6 +157,11 @@ void showErrorScreen(const char* error);
 void buzzAlert(int numBuzz, int duration);
 void logHealthData();
 void readSensorData();
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
     Serial.begin(115200);
@@ -139,32 +200,85 @@ void setup() {
         showErrorScreen("MPU6050 ERROR!");
         while(1);
     }
+
+    //wifi 
+
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("Connecting to Wi-Fi");
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        Serial.print(".");
+        delay(300);
+    }
+    Serial.println();
+    Serial.print("Connected with IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.println();
+
+
+    //firebase signup
+
+    /* Assign the api key (required) */
+    config.api_key = API_KEY;
+
+    /* Assign the user sign in credentials */
+    auth.user.email = USER_EMAIL;
+    auth.user.password = USER_PASSWORD;
+
+    /* Assign the RTDB URL (required) */
+    config.database_url = DATABASE_URL;
+
+    config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
+
+    Firebase.reconnectNetwork(true);
+    fbdo.setBSSLBufferSize(4096 , 1024 );
+
+    Firebase.begin(&config, &auth);
+
+    Firebase.setDoubleDigits(5);
+
     
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
-    
     Serial.println("Starting comprehensive health monitoring...");
 }
 
 void loop() {
-    // Read sensor data
-    readSensorData();
-    
-    // Process health monitoring functions
-    processStepCounting();
-    processSeizureDetection();
-    processFallDetection();
-    
-    // Update display based on current mode
-    if (millis() - lastDisplayUpdate > 200) {  // Update every 200ms
-        updateDisplay();
-        lastDisplayUpdate = millis();
+
+    if (Firebase.ready() && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0)){
+
+        //firebase stuff
+        sendDataPrevMillis = millis();
+        step_detect = Firebase.getBool(fbdo, "/StepDetect");
+        if(!step_detect){
+            Firebase.set(fbdo, "/stepCount", stepCount);
+        }
     }
+        // Read sensor data
+        readSensorData();
+        
+        // Process health monitoring functions
+        if(step_detect){
+            processStepCounting();
+        }else{
+            stepCount = 0; // Reset step count if not in step counting mode
+            step_L_peak_achieved = false;
+        }
+        processStepCounting();
+        processSeizureDetection();
+        processFallDetection();
+        
+        // Update display based on current mode
+        if (millis() - lastDisplayUpdate > 20) {  // Update every 200ms
+            updateDisplay();
+            lastDisplayUpdate = millis();
+        }
+        
+        // Log data for debugging
+        logHealthData();
+        
+        delay(20);  // 20Hz sampling rate
     
-    // Log data for debugging
-    logHealthData();
-    
-    delay(50);  // 20Hz sampling rate
 }
 
 void readSensorData() {
@@ -186,56 +300,48 @@ void readSensorData() {
     float rawGy = gyroY_raw / 131.0;
     float rawGz = gyroZ_raw / 131.0;
     
-    // Apply Kalman filtering
-    filteredAx = simpleKalmanFilter(rawAx, filteredAx, P_ax);
-    filteredAy = simpleKalmanFilter(rawAy, filteredAy, P_ay);
-    filteredAz = simpleKalmanFilter(rawAz, filteredAz, P_az);
-    filteredGx = simpleKalmanFilter(rawGx, filteredGx, P_gx);
-    filteredGy = simpleKalmanFilter(rawGy, filteredGy, P_gy);
-    filteredGz = simpleKalmanFilter(rawGz, filteredGz, P_gz);
+    // // Apply Kalman filtering
+    // filteredAx = simpleKalmanFilter(rawAx, filteredAx, P_ax);
+    // filteredAy = simpleKalmanFilter(rawAy, filteredAy, P_ay);
+    // filteredAz = simpleKalmanFilter(rawAz, filteredAz, P_az);
+    // filteredGx = simpleKalmanFilter(rawGx, filteredGx, P_gx);
+    // filteredGy = simpleKalmanFilter(rawGy, filteredGy, P_gy);
+    // filteredGz = simpleKalmanFilter(rawGz, filteredGz, P_gz);
+
+
+    filteredAx = rawAx ;
+    filteredAy = rawAy ;
+    filteredAz = rawAz ;
+    filteredGx = rawGx ;
+    filteredGy = rawGy ;
+    filteredGz = rawGz ;
+    
 }
 
-void processStepCounting() {
-    // Calculate acceleration magnitude
-    float accelMagnitude = sqrt(filteredAx * filteredAx + 
+void processStepCounting(){
+     float accelMagnitude = sqrt(filteredAx * filteredAx + 
                                filteredAy * filteredAy + 
                                filteredAz * filteredAz);
-    
-    unsigned long currentTime = millis();
-    
-    // Step detection using peak detection algorithm
-    if (accelMagnitude > STEP_THRESHOLD && !stepPeakDetected) {
-        // Calculate time since last step
-        unsigned long timeSinceLastStep = currentTime - lastStepTime;
-        
-        // Check if within valid step timing window
-        if (timeSinceLastStep > STEP_MIN_PERIOD && timeSinceLastStep < STEP_MAX_PERIOD) {
-            // Calculate variance for motion validation
-            stepVarianceSum += (accelMagnitude - lastAccelMagnitude) * (accelMagnitude - lastAccelMagnitude);
-            stepSampleCount++;
-            
-            if (stepSampleCount > 5) {
-                float variance = stepVarianceSum / stepSampleCount;
-                if (variance > STEP_VARIANCE_THRESHOLD) {
-                    // Valid step detected
-                    stepCount++;
-                    lastStepTime = currentTime;
-                    stepPeakDetected = true;
-                    
-                    Serial.print("STEP DETECTED! Total: ");
-                    Serial.println(stepCount);
-                }
-                // Reset variance calculation
-                stepVarianceSum = 0;
-                stepSampleCount = 0;
-            }
-        }
-    } else if (accelMagnitude < STEP_THRESHOLD - 0.1) {
-        stepPeakDetected = false;
+    // Serial.println("accelMagnitude:");
+    // Serial.println(accelMagnitude);
+    // Serial.println("step:");
+    // Serial.println(stepCount);
+    // if(accelMagnitude>1+threshold_step){
+    //     step_H_peak_achieved=true;
+    // }
+    if(accelMagnitude<threshold_step){
+        step_L_peak_achieved=true;
     }
-    
-    lastAccelMagnitude = accelMagnitude;
+
+    if(accelMagnitude>0.95 && accelMagnitude<1.05 ){
+        if(step_L_peak_achieved){
+            stepCount+=2;
+            step_H_peak_achieved=false;
+            step_L_peak_achieved=false;
+        }
+    }
 }
+
 
 void processSeizureDetection() {
     float accelMagnitude = sqrt(filteredAx * filteredAx + 
@@ -260,6 +366,7 @@ void processSeizureDetection() {
                 seizure_burst_count >= SEIZURE_BURST_COUNT) {
                 
                 triggerSeizureAlert();
+                seizure_burst_count = 1;
                 return;
             }
         }
@@ -267,6 +374,8 @@ void processSeizureDetection() {
         // Reset if no activity for reset time
         if (seizure_detected && (currentTime - last_seizure_activity) > SEIZURE_RESET_TIME) {
             resetSeizureDetection();
+            seizure_burst_count = 1;
+
         }
     }
 }
@@ -282,6 +391,7 @@ void processFallDetection() {
     
     unsigned long currentTime = millis();
     
+    float reset_time_thresholds =200;
     // Phase 1: Free fall detection
     if (!fall_free_fall_detected && accelMagnitude < FALL_FREE_FALL_THRESHOLD) {
         fall_free_fall_detected = true;
@@ -292,37 +402,58 @@ void processFallDetection() {
     // Phase 2: Impact detection (after free fall)
     if (fall_free_fall_detected && !fall_impact_detected && 
         accelMagnitude > FALL_IMPACT_THRESHOLD) {
-        
-        fall_impact_detected = true;
-        Serial.println("Impact phase detected!");
+        unsigned long currentTime_2 = millis();
+        if(currentTime_2-fall_detection_start>=reset_time_thresholds){
+            fall_impact_detected = true;
+            fall_stillness_start = currentTime;
+            Serial.println("Impact phase detected!");
+        }
+
     }
     
     // Phase 3: Orientation change detection
-    if (fall_impact_detected && !fall_orientation_changed) {
-        float orientationChange = calculateOrientationChange();
+    // if (fall_impact_detected && !fall_orientation_changed) {
+    //     float orientationChange = calculateOrientationChange();
         
-        if (orientationChange > FALL_ORIENTATION_THRESHOLD) {
-            fall_orientation_changed = true;
-            fall_stillness_start = currentTime;
-            Serial.println("Orientation change detected!");
-        }
-    }
+    //     if (orientationChange > FALL_ORIENTATION_THRESHOLD) {
+    //         fall_orientation_changed = true;
+    //         fall_stillness_start = currentTime;
+    //         Serial.println("Orientation change detected!");
+    //     }
+    // }
     
     // Phase 4: Stillness confirmation
-    if (fall_orientation_changed && !fall_detected) {
-        if (accelMagnitude < FALL_STILLNESS_THRESHOLD && 
-            (currentTime - fall_stillness_start) > FALL_STILLNESS_TIME) {
-            
-            triggerFallAlert();
-            return;
+    if (fall_impact_detected) {
+        if (accelMagnitude < FALL_STILLNESS_THRESHOLD && (currentTime - fall_stillness_start) > FALL_STILLNESS_TIME) {
+            if(accelMagnitude>FALL_STILLNESS_THRESHOLD_min){
+                fall_stillness_comfirmed++;
+            }
         }
     }
+
+    // if (!fall_detected) {
+    //     if (accelMagnitude < FALL_STILLNESS_THRESHOLD && 
+    //         (currentTime - fall_stillness_start) > FALL_STILLNESS_TIME) {
+            
+    //         triggerFallAlert();
+    //         return;
+    //     }
+    // }
     
+    if (fall_free_fall_detected && fall_impact_detected && fall_stillness_comfirmed>10) { 
+        triggerFallAlert();
+
+    }
+
     // Reset fall detection if too much time has passed
-    if (fall_free_fall_detected && 
-        (currentTime - fall_detection_start) > 5000) {  // 5 second timeout
+    if (fall_free_fall_detected && (currentTime - fall_detection_start) < reset_time_thresholds) {
+        if(accelMagnitude > FALL_IMPACT_THRESHOLD){
+            resetFallDetection();
+        }  
+    }else if (currentTime - fall_detection_start>1300){
         resetFallDetection();
     }
+
 }
 
 float calculateOrientationChange() {
@@ -372,8 +503,8 @@ void triggerFallAlert() {
     fall_detected = true;
     
     Serial.println("*** FALL DETECTED! ALERT! ***");
-    buzzAlert(10, 100);  // 10 buzzes, 100ms each
-    
+    buzzAlert(3, 100);  // 10 buzzes, 100ms each
+
     resetFallDetection();
 }
 
@@ -391,6 +522,7 @@ void resetFallDetection() {
     fall_detection_start = 0;
     fall_stillness_start = 0;
     fall_detected = false;
+    fall_stillness_comfirmed=0;
 }
 
 void updateDisplay() {
@@ -502,7 +634,6 @@ void logHealthData() {
     static unsigned long lastLog = 0;
     if (millis() - lastLog > 1000) {  // Log every second
         float accelMag = sqrt(filteredAx * filteredAx + filteredAy * filteredAy + filteredAz * filteredAz);
-        
         Serial.print("Steps: ");
         Serial.print(stepCount);
         Serial.print(" | Accel: ");

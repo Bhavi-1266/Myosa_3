@@ -11,6 +11,47 @@
 #include <math.h>
 
 
+#include <Arduino.h>
+#include <WiFi.h>
+#include <FirebaseESP32.h>
+// Provide the token generation process info.
+#include <addons/TokenHelper.h>
+// Provide the RTDB payload printing info and other helper functions.
+#include <addons/RTDBHelper.h>
+
+
+// ------------- Firebase stuff -----------------
+
+
+/* 1. Define the WiFi credentials */
+#define WIFI_SSID "BHAVY2"
+#define WIFI_PASSWORD "Bms@12666"
+
+// For the following credentials, see examples/Authentications/SignInAsUser/EmailPassword/EmailPassword.ino
+
+/* 2. Define the API Key */
+#define API_KEY "AIzaSyByS6w7S7xJol6hBMkEH6QK0DNHsa6c5CU"
+
+/* 3. Define the RTDB URL */
+#define DATABASE_URL "https://myosa-3-default-rtdb.firebaseio.com" //<databaseName>.firebaseio.com or <databaseName>.<region>.firebasedatabase.app
+
+/* 4. Define the user Email and password that alreadey registerd or added in your project */
+#define USER_EMAIL "Bhavy_mr@cs.iitr.ac.in"
+#define USER_PASSWORD "Bhavy@2006"
+
+// Define Firebase Data object
+FirebaseData fbdo;
+
+FirebaseAuth auth;
+FirebaseConfig config;
+
+unsigned long sendDataPrevMillis = 0;
+
+unsigned long count = 0;
+
+
+//-----------------------------------------------
+
 
 // MPU6050 I2C address (MYOSA platform uses 0x69)
 #define MPU6050_ADDRESS 0x69
@@ -86,6 +127,8 @@ int stepCount =0;
 bool step_L_peak_achieved=false;
 bool step_H_peak_achieved=false;
 float threshold_step = 0.850;
+bool step_detect = false;
+Firebase.setBool(fbdo, "/StepDetect", step_detect);
 
 
 // System variables
@@ -157,6 +200,43 @@ void setup() {
         showErrorScreen("MPU6050 ERROR!");
         while(1);
     }
+
+    //wifi 
+
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("Connecting to Wi-Fi");
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        Serial.print(".");
+        delay(300);
+    }
+    Serial.println();
+    Serial.print("Connected with IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.println();
+
+
+    //firebase signup
+
+    /* Assign the api key (required) */
+    config.api_key = API_KEY;
+
+    /* Assign the user sign in credentials */
+    auth.user.email = USER_EMAIL;
+    auth.user.password = USER_PASSWORD;
+
+    /* Assign the RTDB URL (required) */
+    config.database_url = DATABASE_URL;
+
+    config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
+
+    Firebase.reconnectNetwork(true);
+    fbdo.setBSSLBufferSize(4096 , 1024 );
+
+    Firebase.begin(&config, &auth);
+
+    Firebase.setDoubleDigits(5);
+
     
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
@@ -164,24 +244,41 @@ void setup() {
 }
 
 void loop() {
-    // Read sensor data
-    readSensorData();
-    
-    // Process health monitoring functions
-     processStepCounting();
-    processSeizureDetection();
-    processFallDetection();
-    
-    // Update display based on current mode
-    if (millis() - lastDisplayUpdate > 20) {  // Update every 200ms
-        updateDisplay();
-        lastDisplayUpdate = millis();
+
+    if (Firebase.ready() && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0)){
+
+        //firebase stuff
+        sendDataPrevMillis = millis();
+        step_detect = Firebase.getBool(fbdo, "/StepDetect");
+        if(!step_detect){
+            Firebase.set(fbdo, "/stepCount", stepCount);
+        }
     }
+        // Read sensor data
+        readSensorData();
+        
+        // Process health monitoring functions
+        if(step_detect){
+            processStepCounting();
+        }else{
+            stepCount = 0; // Reset step count if not in step counting mode
+            step_L_peak_achieved = false;
+        }
+        processStepCounting();
+        processSeizureDetection();
+        processFallDetection();
+        
+        // Update display based on current mode
+        if (millis() - lastDisplayUpdate > 20) {  // Update every 200ms
+            updateDisplay();
+            lastDisplayUpdate = millis();
+        }
+        
+        // Log data for debugging
+        logHealthData();
+        
+        delay(20);  // 20Hz sampling rate
     
-    // Log data for debugging
-    logHealthData();
-    
-    delay(20);  // 20Hz sampling rate
 }
 
 void readSensorData() {

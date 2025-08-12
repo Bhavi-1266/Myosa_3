@@ -3,12 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <title>ESP32 Buzzer Control</title>
-  <script  type="module" src="script.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body >
   <h1>ESP32 Buzzer Control</h1>
-  <button class="button" id="buzzButton" value="false">Buzz (find device)!</button>
+  <button class="button" id="buzzButton" value="false">Buzz (find device)</button>
   
+
+
+  <div id="listSessionID"></div>
+
+  <div id="chartContainer">
+    <canvas id="lineChart"></canvas>
+  </div>
+
+
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script  type="module" src="script.js"></script>
 </body>
 </html>

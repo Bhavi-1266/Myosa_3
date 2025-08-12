@@ -178,7 +178,7 @@ bool sendBufferedData() {
   String path = "/" + sessionID + "/sensorData";
 
 
-  if (Firebase.RTDB.setJSON(&fbdo,path, &json)) {
+  if (Firebase.setJSON(fbdo,path, json)) {
     Serial.println("Batch upload successful");
     dataCount = 0;   
     return true;

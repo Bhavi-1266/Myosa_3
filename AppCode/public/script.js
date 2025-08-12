@@ -35,6 +35,10 @@ const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 const dbRef = ref(database);
 
+// Additional variables for statistics tracking
+let currentSessionData = null;
+let totalDataPoints = 0;
+
 // ============================================================================
 // FIREBASE DATABASE HELPER FUNCTIONS
 // ============================================================================
@@ -94,6 +98,13 @@ const getSessionID = () => {
           
           // Add click handler to load session data
           sessionButton.onclick = () => {
+            // Remove active class from all buttons
+            document.querySelectorAll('.session-list .button').forEach(btn => {
+              btn.classList.remove('active');
+            });
+            // Add active class to clicked button
+            sessionButton.classList.add('active');
+            
             const currentSession = sessionButton.value;
             console.log("Loading session:", currentSession);
             readSensorData(`/DataCollection/${sessionID}`);
@@ -134,6 +145,16 @@ const readSensorData = (path) => {
 
       const allData = snapshot.val();
       console.log('Raw session data loaded');
+      
+      currentSessionData = allData;
+
+      // Update step count display
+      const stepCount = allData.stepCount || 0;
+      document.getElementById('stepCountDisplay').textContent = stepCount.toLocaleString();
+
+      // Update current session display
+      const sessionName = path.split('/').pop();
+      document.getElementById('currentSessionDisplay').textContent = sessionName;
 
       const sensorData = allData.sensorData;
       if (!sensorData) {
@@ -146,7 +167,10 @@ const readSensorData = (path) => {
       dataValues.length = 0;
 
       let pointIndex = 0;
+      let totalPoints = 0;
       const baseline = 1;  // Baseline for scaling (sensor values around 1.0)
+      let firstTimestamp = null;
+      let lastTimestamp = null;
 
       // Process each batch of sensor data
       Object.keys(sensorData).forEach(batchKey => {
@@ -154,12 +178,19 @@ const readSensorData = (path) => {
 
         // Process each timestamp-value pair in the batch
         Object.keys(batch).forEach(timestampKey => {
+          totalPoints++;
+          const timestamp = parseInt(timestampKey);
+          
+          if (!firstTimestamp) firstTimestamp = timestamp;
+          lastTimestamp = timestamp;
+
           // Apply sampling: only use every Nth point
           if (pointIndex % samplingRate === 0) {
             const rawValue = batch[timestampKey];
             
-            // Add timestamp to labels (could convert to readable time)
-            labels.push(timestampKey);
+            // Convert timestamp to readable time
+            const timeLabel = new Date(timestamp).toLocaleTimeString();
+            labels.push(timeLabel);
             
             // Scale the value: subtract baseline and multiply for visibility
             const scaledValue = 1000 * (rawValue - baseline);
@@ -169,7 +200,19 @@ const readSensorData = (path) => {
         });
       });
 
-      console.log(`Processed ${labels.length} sampled points from ${pointIndex} total points`);
+      // Update statistics displays
+      totalDataPoints = totalPoints;
+      document.getElementById('dataPointsDisplay').textContent = totalDataPoints.toLocaleString();
+      
+      // Calculate session duration
+      if (firstTimestamp && lastTimestamp) {
+        const duration = (lastTimestamp - firstTimestamp) / 1000; // seconds
+        const minutes = Math.floor(duration / 60);
+        const seconds = Math.floor(duration % 60);
+        document.getElementById('sessionDurationDisplay').textContent = `${minutes}m ${seconds}s`;
+      }
+
+      console.log(`Processed ${labels.length} sampled points from ${totalPoints} total points`);
       console.log('Data range:', Math.min(...dataValues).toFixed(2), 'to', Math.max(...dataValues).toFixed(2));
 
       // Update the chart with new data
@@ -198,14 +241,15 @@ buzzButton.addEventListener("click", () => {
   isActive = !isActive;
 
   // Update button appearance
+  const buttonText = buzzButton.querySelector('span');
   if (isActive) {
-    buzzButton.style.backgroundColor = "green";
-    buzzButton.style.color = "white";
-    buzzButton.textContent = "Buzzer ON";
+    buzzButton.style.backgroundColor = "var(--secondary-color)";
+    buzzButton.classList.add('active');
+    buttonText.textContent = "Buzzer ON";
   } else {
-    buzzButton.style.backgroundColor = "red";
-    buzzButton.style.color = "white";
-    buzzButton.textContent = "Buzzer OFF";
+    buzzButton.style.backgroundColor = "var(--danger-color)";
+    buzzButton.classList.remove('active');
+    buttonText.textContent = "Buzzer OFF";
   }
 
   // Save new state
@@ -214,6 +258,38 @@ buzzButton.addEventListener("click", () => {
 
   console.log("Buzzer state changed to:", isActive);
 });
+
+
+/**
+ * Handle the "Step Counting"  button click
+ * Toggles the step counting state on the ESP32 device via Firebase
+ */
+const StepButton = document.getElementById("StepCountButoon");
+StepButton.addEventListener("click", () => {
+  // Parse current state and toggle
+  let isActive = StepButton.value === "true";
+  isActive = !isActive;
+
+  // Update button appearance
+  const buttonText = StepButton.querySelector('span');
+  if (isActive) {
+    StepButton.style.backgroundColor = "var(--secondary-color)";
+    StepButton.classList.add('active');
+    buttonText.textContent = "STEP COUNTING ON";
+  } else {
+    StepButton.style.backgroundColor = "var(--danger-color)";
+    StepButton.classList.remove('active');
+    buttonText.textContent = "STEP COUNTING OFF";
+  }
+
+  // Save new state
+  StepButton.value = isActive;
+  writeData("/StepDetect", isActive);
+
+  console.log("Step Counting changed to:", isActive);
+});
+
+
 
 // ============================================================================
 // CHART.JS CONFIGURATION AND INITIALIZATION
@@ -240,13 +316,14 @@ const chartConfig = {
   data: chartData,
   options: {
     responsive: true,
+    maintainAspectRatio: false,
     animation: false, // Disable animation for better performance with large datasets
     scales: {
       x: {
         display: true,
         title: {
           display: true,
-          text: 'Time (Unix Timestamp)'
+          text: 'Time'
         }
       },
       y: {
@@ -255,8 +332,8 @@ const chartConfig = {
           display: true,
           text: 'Scaled Acceleration ((value-1)*1000)'
         },
-        suggestedMin: -2000, // Adjust these based on your expected data range
-        suggestedMax: 2000
+        suggestedMin: -25, // Adjust these based on your expected data range
+        suggestedMax: 25
       }
     },
     plugins: {
@@ -284,6 +361,17 @@ const ctx = document.getElementById('lineChart').getContext('2d');
 const lineChart = new Chart(ctx, chartConfig);
 
 // ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+/**
+ * Reset chart zoom to default view
+ */
+window.resetZoom = function() {
+  lineChart.resetZoom();
+};
+
+// ============================================================================
 // APPLICATION INITIALIZATION
 // ============================================================================
 
@@ -299,9 +387,10 @@ window.addEventListener("load", () => {
   
   // Initialize buzzer button state
   buzzButton.value = "false";
-  buzzButton.style.backgroundColor = "red";
+  buzzButton.style.backgroundColor = "var(--danger-color)";
   buzzButton.style.color = "white";
-  buzzButton.textContent = "Buzzer OFF";
+  const buttonText = buzzButton.querySelector('span');
+  buttonText.textContent = "Buzzer OFF";
 });
 
 // ============================================================================

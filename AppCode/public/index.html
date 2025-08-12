@@ -1,26 +1,131 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>ESP32 Buzzer Control</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 Health Monitor Dashboard</title>
   <link rel="stylesheet" href="style.css">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
-<body >
-  <h1>ESP32 Buzzer Control</h1>
-  <button class="button" id="buzzButton" value="false">Buzz (find device)</button>
-  
+<body>
+  <!-- Header Section -->
+  <header class="header">
+    <div class="container">
+      <h1><i class="fas fa-heartbeat"></i> ESP32 Health Monitor</h1>
+      <p class="subtitle">Real-time sensor data visualization and device control</p>
+    </div>
+  </header>
 
+  <!-- Main Dashboard -->
+  <main class="container">
+    
+    <!-- Control Panel -->
+    <section class="control-panel">
+      <div class="card">
+        <h2><i class="fas fa-cog"></i> Device Control</h2>
+        <div class="control-group">
+          <div class ="control-buttons">
+            <button id="buzzButton" class="control-btn">
+              <i class="fas fa-bell"></i>
+              <span>Buzzer OFF</span>
+            </button>
+            <button id="StepCountButoon" class="control-btn">
+              <i class="fas fa-bell"></i>
+              <span>COUNT STEPS</span>
+            </button>
+          </div>
+          <div class="status-indicator">
+            <span class="status-label">Device Status:</span>
+            <span class="status-dot online"></span>
+            <span class="status-text">Online</span>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <div id="listSessionID"></div>
+    <!-- Session Selection -->
+    <section class="session-section">
+      <div class="card">
+        <h2><i class="fas fa-list"></i> Available Sessions</h2>
+        <div id="listSessionID" class="session-list">
+          <!-- Session buttons will be dynamically added here -->
+        </div>
+      </div>
+    </section>
 
-  <div id="chartContainer">
-    <canvas id="lineChart"></canvas>
-  </div>
+    <!-- Statistics Cards -->
+    <section class="stats-section">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon">
+            <i class="fas fa-walking"></i>
+          </div>
+          <div class="stat-info">
+            <h3 id="stepCountDisplay">0</h3>
+            <p>Total Steps</p>
+          </div>
+        </div>
+        
+        <div class="stat-card">
+          <div class="stat-icon">
+            <i class="fas fa-database"></i>
+          </div>
+          <div class="stat-info">
+            <h3 id="dataPointsDisplay">0</h3>
+            <p>Data Points</p>
+          </div>
+        </div>
+        
+        <div class="stat-card">
+          <div class="stat-icon">
+            <i class="fas fa-clock"></i>
+          </div>
+          <div class="stat-info">
+            <h3 id="sessionDurationDisplay">--</h3>
+            <p>Session Duration</p>
+          </div>
+        </div>
+        
+        <div class="stat-card">
+          <div class="stat-icon">
+            <i class="fas fa-chart-line"></i>
+          </div>
+          <div class="stat-info">
+            <h3 id="currentSessionDisplay">None</h3>
+            <p>Active Session</p>
+          </div>
+        </div>
+      </div>
+    </section>
 
+    <!-- Chart Section -->
+    <section class="chart-section">
+      <div class="card">
+        <div class="chart-header">
+          <h2><i class="fas fa-chart-line"></i> Sensor Data Visualization</h2>
+          <div class="chart-controls">
+            <button class="chart-btn" onclick="resetZoom()">
+              <i class="fas fa-search-minus"></i> Reset Zoom
+            </button>
+          </div>
+        </div>
+        <div id="chartContainer">
+          <canvas id="lineChart"></canvas>
+        </div>
+      </div>
+    </section>
 
+  </main>
 
-  <!-- Chart.js CDN -->
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2025 ESP32 Health Monitor Dashboard | Built with Firebase & Chart.js</p>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script  type="module" src="script.js"></script>
+  <script type="module" src="script.js"></script>
 </body>
 </html>

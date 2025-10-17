@@ -40,6 +40,8 @@ const dbRef = ref(database);
 // Additional variables for statistics tracking
 let currentSessionData = null;
 let totalDataPoints = 0;
+const ONLINE_TIMEOUT_MS = 10000; // consider device online if last sample within this window
+let lastDataTimestamp = 0; // last sensor timestamp observed (ms since epoch)
 
 // ============================================================================
 // FIREBASE DATABASE HELPER FUNCTIONS
@@ -89,9 +91,17 @@ const getSessionID = () => {
         
         const sessionIDs = Object.keys(allSessions);
         console.log("Session IDs:", sessionIDs);
-        
-        // Create a button for each session ID
-        sessionIDs.forEach((sessionID) => {
+
+        // Sort sessions by numeric suffix descending (Session_12 > Session_7)
+        const sortedSessionIDs = sessionIDs.slice().sort((a, b) => {
+          const an = parseInt(String(a).split('_')[1], 10);
+          const bn = parseInt(String(b).split('_')[1], 10);
+          if (!Number.isNaN(an) && !Number.isNaN(bn)) return bn - an;
+          return String(a).localeCompare(String(b));
+        });
+
+        // Create a button for each session ID in sorted order
+        sortedSessionIDs.forEach((sessionID) => {
           const sessionButton = document.createElement("button");
           sessionButton.textContent = `Session: ${sessionID}`;
           sessionButton.className = "button";
@@ -126,6 +136,26 @@ const getSessionID = () => {
           // Add button to the UI
           document.getElementById("listSessionID").appendChild(sessionButton);
         });
+
+        // Preselect the numerically latest session (e.g., Session_123 > Session_7)
+        const latestSessionId = (() => {
+          let maxPair = [-Infinity, null];
+          sessionIDs.forEach((id) => {
+            const parts = String(id).split('_');
+            const num = parts.length > 1 ? parseInt(parts[1], 10) : NaN;
+            if (!Number.isNaN(num) && num > maxPair[0]) {
+              maxPair = [num, id];
+            }
+          });
+          return maxPair[1] || sessionIDs.sort().slice(-1)[0];
+        })();
+
+        if (latestSessionId) {
+          const btn = document.getElementById(`session-${latestSessionId}`);
+          if (btn && typeof btn.onclick === 'function') {
+            btn.onclick();
+          }
+        }
       } else {
         console.log("No sessions found in DataCollection");
       }
@@ -216,6 +246,13 @@ const readSensorData = (path) => {
       // Update statistics displays
       totalDataPoints = totalPoints;
       document.getElementById('dataPointsDisplay').textContent = totalDataPoints.toLocaleString();
+      // Online/offline detection based on the latest data timestamp
+      if (lastTimestamp) {
+        lastDataTimestamp = Math.max(lastDataTimestamp, lastTimestamp);
+      }
+      const now = Date.now();
+      const isOnline = lastDataTimestamp > 0 && (now - lastDataTimestamp) <= ONLINE_TIMEOUT_MS;
+      updateDeviceStatus(isOnline);
       
       // Calculate session duration
       if (firstTimestamp && lastTimestamp) {
@@ -324,6 +361,8 @@ const chartData = {
 };
 
 // Chart configuration
+const VISIBLE_POINTS = 300; // default visible window size
+
 const chartConfig = {
   type: 'line',
   data: chartData,
@@ -337,6 +376,10 @@ const chartConfig = {
         title: {
           display: true,
           text: 'Time'
+        },
+        ticks: {
+          maxRotation: 0,
+          autoSkip: true,
         }
       },
       y: {
@@ -364,6 +407,25 @@ const chartConfig = {
             return `Scaled: ${scaledValue.toFixed(2)}, Original: ${originalValue.toFixed(4)}g`;
           }
         }
+      },
+      zoom: {
+        pan: {
+          enabled: true,
+          mode: 'x',
+          modifierKey: 'ctrl'
+        },
+        zoom: {
+          wheel: {
+            enabled: true
+          },
+          pinch: {
+            enabled: true
+          },
+          mode: 'x'
+        },
+        limits: {
+          x: { minRange: 10 }
+        }
       }
     }
   }
@@ -383,6 +445,38 @@ const lineChart = new Chart(ctx, chartConfig);
 window.resetZoom = function() {
   lineChart.resetZoom();
 };
+
+// Keep only the last N points visible while retaining full data for panning
+function clampToLatestWindow() {
+  const total = lineChart.data.labels.length;
+  if (total <= VISIBLE_POINTS) return;
+  const start = total - VISIBLE_POINTS;
+  const end = total - 1;
+  lineChart.config.options.scales.x.min = start;
+  lineChart.config.options.scales.x.max = end;
+}
+
+// Public helper to snap view to the latest window
+window.resetToLatestWindow = function() {
+  lineChart.resetZoom();
+  clampToLatestWindow();
+  lineChart.update('none');
+};
+
+function updateDeviceStatus(isOnline) {
+  const dot = document.querySelector('.status-dot');
+  const text = document.querySelector('.status-text');
+  if (!dot || !text) return;
+  if (isOnline) {
+    dot.classList.remove('offline');
+    dot.classList.add('online');
+    text.textContent = 'Online';
+  } else {
+    dot.classList.remove('online');
+    dot.classList.add('offline');
+    text.textContent = 'Offline';
+  }
+}
 
 // ============================================================================
 // APPLICATION INITIALIZATION
@@ -404,6 +498,9 @@ window.addEventListener("load", () => {
   buzzButton.style.color = "white";
   const buttonText = buzzButton.querySelector('span');
   buttonText.textContent = "Buzzer OFF";
+
+  // Start status as Offline until fresh data arrives
+  updateDeviceStatus(false);
 });
 
 // ============================================================================

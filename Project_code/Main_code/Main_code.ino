@@ -279,7 +279,7 @@ void setup() {
     Serial.println();
 
     setSessionIDFromTime();
-    Firebase.setBool(fbdo, "/" + sessionID + "/StepDetect", step_detect);
+    Firebase.setBool(fbdo,  "/StepDetect", step_detect);
 
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
@@ -287,51 +287,72 @@ void setup() {
 }
 
 void loop() {
-    if (Firebase.ready() && (millis() - sendDataPrevMillis > 5000 || sendDataPrevMillis == 0)){
+  // Check Firebase connection and send data every 5 seconds
+  if (Firebase.ready() && (millis() - sendDataPrevMillis > 5000 || sendDataPrevMillis == 0)) {
+    sendDataPrevMillis = millis();
 
-        //firebase stuff
-        sendDataPrevMillis = millis();
-        if (Firebase.getBool(fbdo, "/" + sessionID + "/StepDetect")) {
-            step_detect = fbdo.to<bool>();
-        } else {
-            Serial.println("getBool failed: " + fbdo.errorReason());
-        }
-        if(!step_detect){
-            Firebase.setInt(fbdo, "/" + sessionID + "/stepCount", stepCount);
-        }
-
-        if (sendBufferedData()) {
-          Serial.println("Data sent OK");
-        } else {
-           Serial.println("Send failed");
-        }
-    }
-    
-    // Read sensor data
-    readSensorData();
-    
-    // Process health monitoring functions
-    if(step_detect){
-        processStepCounting();
+    // Retrieve StepDetect flag
+    if (Firebase.getBool(fbdo, "/StepDetect")) {
+      step_detect = fbdo.to<bool>();
     } else {
-        stepCount = 0; // Reset step count if not in step counting mode
-        step_L_peak_achieved = false;
+      Serial.println("getBool StepDetect failed: " + fbdo.errorReason());
     }
+
+    // Retrieve FindMy flag
+    bool findMy = false;
+    if (Firebase.getBool(fbdo,  "/FindMy")) {
+      findMy = fbdo.to<bool>();
+    } else {
+      Serial.println("getBool FindMy failed: " + fbdo.errorReason());
+    }
+    if (findMy) {
+      buzzAlert(5, 4000);  // 5 short buzzes of 5ms
+      Firebase.setBool(fbdo, "/FindMy", false);
+    }
+
+    // Update step count in the database
+      Firebase.setInt(fbdo, "/" + sessionID + "/stepCount", stepCount);
+    
+
+    // Send buffered sensor data
+    if (sendBufferedData()) {
+      Serial.println("Data sent OK");
+    } else {
+      Serial.println("Send failed");
+    }
+  }
+
+  // Read sensor data from MPU6050
+  readSensorData();
+
+  // Process step counting if enabled
+  if (step_detect) {
     processStepCounting();
-    processSeizureDetection();
-    processFallDetection();
-    
-    // Update display based on current mode
-    if (millis() - lastDisplayUpdate > 20) {  // Update every 200ms
-        updateDisplay();
-        lastDisplayUpdate = millis();
-    }
-    
-    // Log data for debugging
-    logHealthData();
-    
-    delay(20);  // 20Hz sampling rate
+  } else {
+    stepCount = 0;                    // Reset step count
+    step_L_peak_achieved = false;    // Reset step detection state
+  }
+
+  // Trigger buzzer if FindMy flag is set
+  
+
+  // Process seizure and fall detection
+  processSeizureDetection();
+  processFallDetection();
+
+  // Update the OLED display every 20ms (50Hz)
+  if (millis() - lastDisplayUpdate > 20) {
+    updateDisplay();
+    lastDisplayUpdate = millis();
+  }
+
+  // Log health data to Serial every second
+  logHealthData();
+
+  // Delay for a 20Hz loop frequency
+  delay(20);
 }
+
 
 void readSensorData() {
     // Read accelerometer data

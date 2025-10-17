@@ -17,7 +17,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebas
 import { getDatabase, ref, set, get, child } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
 
 // Configuration constants
-const samplingRate = 100; // Take every 100th data point for performance
+const samplingRate = 1; // Take every 100th data point for performance
+let selectedSessionID = null;
+let sessionUpdateInterval = null;
 
 // Firebase project configuration
 const firebaseConfig = {
@@ -100,14 +102,25 @@ const getSessionID = () => {
           sessionButton.onclick = () => {
             // Remove active class from all buttons
             document.querySelectorAll('.session-list .button').forEach(btn => {
-              btn.classList.remove('active');
+                btn.classList.remove('active');
             });
-            // Add active class to clicked button
-            sessionButton.classList.add('active');
-            
-            const currentSession = sessionButton.value;
-            console.log("Loading session:", currentSession);
-            readSensorData(`/DataCollection/${sessionID}`);
+              // Add active class to clicked button
+              sessionButton.classList.add('active');
+
+              // Track currently selected session ID
+              selectedSessionID = sessionButton.value;
+
+              // Load once immediately
+              readSensorData(`/DataCollection/${selectedSessionID}`);
+
+              // Clear previous interval if any
+              if (sessionUpdateInterval) clearInterval(sessionUpdateInterval);
+
+              // Every 4 seconds, update chart and step count
+              sessionUpdateInterval = setInterval(() => {
+                readSensorData(`/DataCollection/${selectedSessionID}`);
+              }, 1000);
+
           };
           
           // Add button to the UI

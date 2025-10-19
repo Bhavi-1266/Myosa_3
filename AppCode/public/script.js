@@ -231,9 +231,9 @@ const readSensorData = (path) => {
           if (pointIndex % samplingRate === 0) {
             const rawValue = batch[timestampKey];
             
-            // Convert timestamp to readable time
-            const timeLabel = new Date(timestamp).toLocaleTimeString();
-            labels.push(timeLabel);
+            // Use numbered points instead of time labels
+            const pointNumber = labels.length + 1;
+            labels.push(`Point ${pointNumber}`);
             
             // Scale the value: subtract baseline and multiply for visibility
             const scaledValue = 1000 * (rawValue - baseline);

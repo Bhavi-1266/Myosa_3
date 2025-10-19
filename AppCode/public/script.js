@@ -6,6 +6,7 @@
  * - Display sensor data graphs with scaling and sampling
  * - Control ESP32 "FindMy" buzzer remotely
  * - Real-time data visualization using Chart.js
+ * - Auto-scroll functionality for real-time updates
  */
 
 // ============================================================================
@@ -20,6 +21,10 @@ import { getDatabase, ref, set, get, child } from "https://www.gstatic.com/fireb
 const samplingRate = 1; // Take every 100th data point for performance
 let selectedSessionID = null;
 let sessionUpdateInterval = null;
+
+// Auto-scroll control
+let autoScrollEnabled = true; // Enable auto-scroll by default
+let userHasZoomed = false; // Track if user manually zoomed/panned
 
 // Firebase project configuration
 const firebaseConfig = {
@@ -120,13 +125,17 @@ const getSessionID = () => {
               // Track currently selected session ID
               selectedSessionID = sessionButton.value;
 
+              // Reset auto-scroll when switching sessions
+              autoScrollEnabled = true;
+              userHasZoomed = false;
+
               // Load once immediately
               readSensorData(`/DataCollection/${selectedSessionID}`);
 
               // Clear previous interval if any
               if (sessionUpdateInterval) clearInterval(sessionUpdateInterval);
 
-              // Every 4 seconds, update chart and step count
+              // Every 1 second, update chart and step count
               sessionUpdateInterval = setInterval(() => {
                 readSensorData(`/DataCollection/${selectedSessionID}`);
               }, 1000);
@@ -215,37 +224,57 @@ const readSensorData = (path) => {
       let firstTimestamp = null;
       let lastTimestamp = null;
 
+      // Collect all timestamp-value pairs first for sorting
+      const allPoints = [];
+
       // Process each batch of sensor data
       Object.keys(sensorData).forEach(batchKey => {
         const batch = sensorData[batchKey];
 
         // Process each timestamp-value pair in the batch
         Object.keys(batch).forEach(timestampKey => {
-          totalPoints++;
           const timestamp = parseInt(timestampKey);
-          
-          if (!firstTimestamp) firstTimestamp = timestamp;
-          lastTimestamp = timestamp;
-
-          // Apply sampling: only use every Nth point
-          if (pointIndex % samplingRate === 0) {
-            const rawValue = batch[timestampKey];
-            
-            // Use numbered points instead of time labels
-            const pointNumber = labels.length + 1;
-            labels.push(`Point ${pointNumber}`);
-            
-            // Scale the value: subtract baseline and multiply for visibility
-            const scaledValue = 1000 * (rawValue - baseline);
-            dataValues.push(scaledValue);
-          }
-          pointIndex++;
+          const rawValue = batch[timestampKey];
+          allPoints.push({ timestamp, rawValue });
         });
+      });
+
+      // Sort by timestamp to ensure chronological order
+      allPoints.sort((a, b) => a.timestamp - b.timestamp);
+
+      // Now process sorted points
+      allPoints.forEach(point => {
+        totalPoints++;
+        const timestamp = point.timestamp;
+        
+        if (!firstTimestamp) firstTimestamp = timestamp;
+        lastTimestamp = timestamp;
+
+        // Apply sampling: only use every Nth point
+        if (pointIndex % samplingRate === 0) {
+          const rawValue = point.rawValue;
+          
+          // Convert timestamp to readable time (local timezone)
+          const date = new Date(timestamp);
+          const timeLabel = date.toLocaleTimeString('en-US', { 
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+          labels.push(timeLabel);
+          
+          // Scale the value: subtract baseline and multiply for visibility
+          const scaledValue = 1000 * (rawValue - baseline);
+          dataValues.push(scaledValue);
+        }
+        pointIndex++;
       });
 
       // Update statistics displays
       totalDataPoints = totalPoints;
       document.getElementById('dataPointsDisplay').textContent = totalDataPoints.toLocaleString();
+      
       // Online/offline detection based on the latest data timestamp
       if (lastTimestamp) {
         lastDataTimestamp = Math.max(lastDataTimestamp, lastTimestamp);
@@ -268,7 +297,13 @@ const readSensorData = (path) => {
       // Update the chart with new data
       lineChart.data.labels = labels;
       lineChart.data.datasets[0].data = dataValues;
-      lineChart.update();
+      
+      // Apply auto-scroll if enabled
+      if (autoScrollEnabled && !userHasZoomed) {
+        scrollToLatest();
+      }
+      
+      lineChart.update('none'); // Use 'none' mode for better performance
 
     })
     .catch((error) => {
@@ -412,7 +447,13 @@ const chartConfig = {
         pan: {
           enabled: true,
           mode: 'x',
-          modifierKey: 'ctrl'
+          modifierKey: 'ctrl',
+          onPanStart: function() {
+            // User manually panned, disable auto-scroll
+            userHasZoomed = true;
+            autoScrollEnabled = false;
+            console.log('Auto-scroll disabled: User panned');
+          }
         },
         zoom: {
           wheel: {
@@ -421,7 +462,13 @@ const chartConfig = {
           pinch: {
             enabled: true
           },
-          mode: 'x'
+          mode: 'x',
+          onZoomStart: function() {
+            // User manually zoomed, disable auto-scroll
+            userHasZoomed = true;
+            autoScrollEnabled = false;
+            console.log('Auto-scroll disabled: User zoomed');
+          }
         },
         limits: {
           x: { minRange: 10 }
@@ -440,27 +487,73 @@ const lineChart = new Chart(ctx, chartConfig);
 // ============================================================================
 
 /**
- * Reset chart zoom to default view
+ * Scroll to the latest data in the chart
+ * Works for both dense view (all data) and zoomed view (window)
+ */
+function scrollToLatest() {
+  const total = lineChart.data.labels.length;
+  if (total === 0) return;
+  
+  // Check current zoom level
+  const xScale = lineChart.scales.x;
+  const currentMin = xScale.min;
+  const currentMax = xScale.max;
+  
+  // If user has zoomed (range is smaller than total), maintain zoom level
+  if (currentMin !== undefined && currentMax !== undefined) {
+    const currentRange = currentMax - currentMin;
+    
+    // Keep same zoom range but shift to latest data
+    const newMax = total - 1;
+    const newMin = Math.max(0, newMax - currentRange);
+    
+    xScale.options.min = newMin;
+    xScale.options.max = newMax;
+  } else {
+    // Dense view: show last VISIBLE_POINTS
+    if (total > VISIBLE_POINTS) {
+      const newMin = total - VISIBLE_POINTS;
+      const newMax = total - 1;
+      xScale.options.min = newMin;
+      xScale.options.max = newMax;
+    } else {
+      // Show all data if less than VISIBLE_POINTS
+      xScale.options.min = undefined;
+      xScale.options.max = undefined;
+    }
+  }
+}
+
+/**
+ * Reset chart zoom to default view and re-enable auto-scroll
  */
 window.resetZoom = function() {
   lineChart.resetZoom();
+  userHasZoomed = false;
+  autoScrollEnabled = true;
+  console.log('Auto-scroll re-enabled');
 };
 
-// Keep only the last N points visible while retaining full data for panning
-function clampToLatestWindow() {
-  const total = lineChart.data.labels.length;
-  if (total <= VISIBLE_POINTS) return;
-  const start = total - VISIBLE_POINTS;
-  const end = total - 1;
-  lineChart.config.options.scales.x.min = start;
-  lineChart.config.options.scales.x.max = end;
-}
-
-// Public helper to snap view to the latest window
+/**
+ * Public helper to snap view to the latest window and re-enable auto-scroll
+ */
 window.resetToLatestWindow = function() {
-  lineChart.resetZoom();
-  clampToLatestWindow();
+  userHasZoomed = false;
+  autoScrollEnabled = true;
+  
+  const total = lineChart.data.labels.length;
+  if (total > VISIBLE_POINTS) {
+    const xScale = lineChart.scales.x;
+    const newMin = total - VISIBLE_POINTS;
+    const newMax = total - 1;
+    xScale.options.min = newMin;
+    xScale.options.max = newMax;
+  } else {
+    lineChart.resetZoom();
+  }
+  
   lineChart.update('none');
+  console.log('Jumped to latest window, auto-scroll re-enabled');
 };
 
 function updateDeviceStatus(isOnline) {
@@ -488,6 +581,7 @@ function updateDeviceStatus(isOnline) {
 window.addEventListener("load", () => {
   console.log("ESP32 Health Monitor Dashboard loaded");
   console.log(`Using sampling rate: 1 out of every ${samplingRate} points`);
+  console.log("Auto-scroll enabled by default");
   
   // Load available sessions
   getSessionID();
